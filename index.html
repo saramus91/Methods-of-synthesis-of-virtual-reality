@@ -1,34 +1,71 @@
 <!DOCTYPE html>
-<html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<html>
+<head>
+   <meta charset="UTF-8">
+   <title>PA#1</title>
+   <style>
+      body {
+         background-color: #EEEEEE;
+         margin: 0;
+         padding: 0;
+      }
+      #canvas-holder {
+         text-align: center;
+         margin-top: 10px;
+      }
+      #controls {
+         text-align: center;
+         margin-top: 10px;
+      }
+      .slider-label {
+         display: inline-block;
+         width: 150px;
+         text-align: right;
+         margin-right: 5px;
+      }
+   </style>
 
-
-<title>PA#1</title>
-<style>
-    body {
-        background-color: #EEEEEE;
-    }
-</style>
-
-<script src="./Utils/trackball-rotator.js"></script>
-<script src="./Utils/m4.js"></script>
-<script src="./shader.gpu"></script>
-<script src="./Model.js"></script>
-<script src="./StereoCamera.js"></script>
-<script src="./Texture.js"></script>
-<script src="./main.js"></script>
-
+   <script src="./Utils/trackball-rotator.js"></script>
+   <script src="./Utils/m4.js"></script>
+   <script src="./StereoCamera.js"></script>
+   <script src="./Texture.js"></script>
+   <script src="./Model.js"></script>
+   <script src="./shader.gpu"></script>
+   <script src="./main.js"></script>
 </head>
 <body onload="init()">
 
-<h2>A Cube with "Trackball" Mouse Rotation</h2>
-
-<p id="message">Drag your mouse on the cube to rotate it.<br>
-(On a touch screen, you can use your finger.)</p>
-
-
-<div id="canvas-holder">
-   <canvas width="600" height="600" id="webglcanvas" style="background-color:red"></canvas>
+<div id="controls">
+   <div>
+      <span class="slider-label">Eye Separation:</span>
+      <input type="range" id="eyeSeparation" min="0" max="2" step="0.01" value="0.7" oninput="updateStereoParams()">
+      <span id="eyeSepVal">0.7</span>
+   </div>
+   <div>
+      <span class="slider-label">Convergence:</span>
+      <input type="range" id="convergence" min="5" max="30" step="0.1" value="14" oninput="updateStereoParams()">
+      <span id="convVal">14</span>
+   </div>
+   <div>
+      <span class="slider-label">FOV (rad):</span>
+      <input type="range" id="fov" min="0.1" max="1.5" step="0.01" value="0.4" oninput="updateStereoParams()">
+      <span id="fovVal">0.4</span>
+   </div>
+   <div>
+      <span class="slider-label">Near Clipping:</span>
+      <input type="range" id="nearClip" min="1" max="15" step="0.1" value="8" oninput="updateStereoParams()">
+      <span id="nearVal">8</span>
+   </div>
+   <div>
+      <span class="slider-label">Far Clipping:</span>
+      <input type="range" id="farClip" min="15" max="40" step="1" value="20" oninput="updateStereoParams()">
+      <span id="farVal">20</span>
+   </div>
 </div>
 
+<div id="canvas-holder">
+   <canvas width="800" height="600" id="webglcanvas" style="background-color: #000;"></canvas>
+</div>
 
-</body></html>
+</body>
+</html>

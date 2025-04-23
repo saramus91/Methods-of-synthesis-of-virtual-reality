@@ -1,231 +1,252 @@
-'use strict';
+"use strict";
 
-let gl;                         // The webgl context.
-let surface;                    // A surface model
-let surfaceWebCam;              // A substrate for webcam image
-let shProgram;                  // A shader program
-let spaceball;                  // A SimpleRotator object that lets the user rotate the view by mouse.
-let stereoCam;                  // Object holding stereo camera and its parameters
-
-let iTextureWebCam = -1;
-
+let gl;
+let shProgram;
+let spaceball;
+let stereoCam;
 let video;
+let iTextureWebCam = null;
 
-// Constructor
-function ShaderProgram(name, program) {
+let surface;
 
-    this.name = name;
-    this.prog = program;
+let fullscreenQuad = {
+    iVertexBuffer: null,
+    iTexCoordBuffer: null
+};
 
-    // Location of the attribute variable in the shader program.
-    this.iAttribVertex = -1;
-    // Location of the uniform specifying a color for the primitive.
-    this.iColor = -1;
-    // Location of the uniform matrix representing the combined transformation.
-    this.iModelViewProjectionMatrix = -1;
-
-    this.Use = function() {
-        gl.useProgram(this.prog);
+function init() {
+    let canvas = document.getElementById("webglcanvas");
+    try {
+        gl = canvas.getContext("webgl");
+        if (!gl) throw "Browser does not support WebGL";
+    } catch(e) {
+        alert("Could not initialize WebGL context: " + e);
+        return;
     }
+
+    initShaders();
+
+    surface = new ModelSurface();
+    surface.CreateSurfaceData();
+
+    initFullScreenQuad();
+
+    stereoCam = new StereoCamera(
+        0.7,
+        14.0,
+        canvas.width / canvas.height,
+        0.4,
+        8.0,
+        20.0
+    );
+
+    gl.enable(gl.DEPTH_TEST);
+
+    video = document.createElement('video');
+    video.autoplay = true;
+    navigator.mediaDevices.getUserMedia({video: true}).then(function(stream) {
+        video.srcObject = stream;
+        let track = stream.getVideoTracks()[0];
+        let settings = track.getSettings();
+        iTextureWebCam = CreateWebCamTexture(settings.width, settings.height);
+        video.play();
+    }).catch(function(err) {
+        console.log(err.name + ": " + err.message);
+    });
+
+    spaceball = new TrackballRotator(canvas, drawScene, 0);
+
+    setInterval(drawScene, 1000 / 30);
 }
 
 
-/* Draws a colored cube, along with a set of coordinate axes.
- * (Note that the use of the above drawPrimitive function is not an efficient
- * way to draw with WebGL.  Here, the geometry is so simple that it doesn't matter.)
- */
-function draw() { 
-    gl.clearColor(0,0,0,1);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-    // PATH ZERO: DRAW ZERO PARALLAX WEBCAM
-
-    if (iTextureWebCam >= 0) {
-        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0,0, gl.RGBA, gl.UNSIGNED_BYTE, video);
+function initShaders() {
+    let vsh = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vsh, vertexShaderSource);
+    gl.compileShader(vsh);
+    if (!gl.getShaderParameter(vsh, gl.COMPILE_STATUS)) {
+        throw new Error("Vertex shader error: " + gl.getShaderInfoLog(vsh));
     }
 
-    let matrOrth = m4.orthographic(0,1,0,1, 8,20);
-    
-    // TODO: Place your code here to draw webCam surface
+    let fsh = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(fsh, fragmentShaderSource);
+    gl.compileShader(fsh);
+    if (!gl.getShaderParameter(fsh, gl.COMPILE_STATUS)) {
+        throw new Error("Fragment shader error: " + gl.getShaderInfoLog(fsh));
+    }
 
-    
-    /* Get the view matrix from the SimpleRotator object.*/
+    let prog = gl.createProgram();
+    gl.attachShader(prog, vsh);
+    gl.attachShader(prog, fsh);
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+        throw new Error("Link error: " + gl.getProgramInfoLog(prog));
+    }
+
+    gl.useProgram(prog);
+
+    shProgram = {};
+    shProgram.prog = prog;
+    shProgram.iAttribVertex     = gl.getAttribLocation(prog, "aVertex");
+    shProgram.iAttribTexCoord   = gl.getAttribLocation(prog, "aTexCoord");
+    shProgram.iModelViewMatrix  = gl.getUniformLocation(prog, "uModelViewMatrix");
+    shProgram.iProjectionMatrix = gl.getUniformLocation(prog, "uProjectionMatrix");
+    shProgram.iUseTexture       = gl.getUniformLocation(prog, "uUseTexture");
+    shProgram.iSampler          = gl.getUniformLocation(prog, "uSampler");
+    shProgram.iColor            = gl.getUniformLocation(prog, "uColor");
+    shProgram.iFullScreenQuad   = gl.getUniformLocation(prog, "uFullScreenQuad");
+}
+
+
+
+function initFullScreenQuad() {
+    fullscreenQuad.iVertexBuffer = gl.createBuffer();
+    fullscreenQuad.iTexCoordBuffer = gl.createBuffer();
+
+    let quadVerts = new Float32Array([
+        -1, -1,  0,
+        1, -1,  0,
+        1,  1,  0,
+
+        -1, -1,  0,
+        1,  1,  0,
+        -1,  1,  0
+    ]);
+    let quadTex = new Float32Array([
+        0, 0,
+        1, 0,
+        1, 1,
+
+        0, 0,
+        1, 1,
+        0, 1
+    ]);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, fullscreenQuad.iVertexBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, quadVerts, gl.STATIC_DRAW);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, fullscreenQuad.iTexCoordBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, quadTex, gl.STATIC_DRAW);
+}
+
+
+function drawScene() {
+    if (!gl) return;
+
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    if (iTextureWebCam && video.readyState === video.HAVE_ENOUGH_DATA) {
+        gl.bindTexture(gl.TEXTURE_2D, iTextureWebCam);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0,
+            gl.RGBA, gl.UNSIGNED_BYTE, video);
+    }
+
+    gl.colorMask(true, true, true, true);
+    drawBackground();
+
     let modelView = spaceball.getViewMatrix();
 
-    let rotateToPointZero = m4.axisRotation([0.707,0.707,0], 0.7);
-    let translateToPointZero = m4.translation(0,0,-10);
+    let leftFrustum = stereoCam.calcLeftFrustum();
+    gl.uniformMatrix4fv(shProgram.iProjectionMatrix, false, leftFrustum);
 
-    const colorPolygon = new Float32Array([0.5,0.5,0.5,1]);
-    const colorEdge    = new Float32Array([1,1,1,1]);
+    let translateLeftEye = m4.translation(stereoCam.eyeSeparation / 2, 0, 0);
+    let matSurfaceLeft = m4.multiply(translateLeftEye, modelView);
+    matSurfaceLeft = m4.multiply(m4.translation(0, 0, -10), matSurfaceLeft);
 
-    // The FIRST PASS (for the left eye)
-
-    let matrLeftFrustum = stereoCam.calcLeftFrustum();
-    gl.uniformMatrix4fv(shProgram.iProjectionMatrix, false, matrLeftFrustum);
-
-    let translateLeftEye = m4. translation(stereoCam.eyeSeparation/2, 0, 0);
-
-    let matAccum0 = m4.multiply(rotateToPointZero, modelView );
-    let matAccum1 = m4.multiply(translateLeftEye, matAccum0 );
-    let matAccum2 = m4.multiply(translateToPointZero, matAccum1 );
-        
-    gl.uniformMatrix4fv(shProgram.iModelViewMatrix, false, matAccum2 );
+    gl.colorMask(true, false, false, true);
 
     gl.enable(gl.POLYGON_OFFSET_FILL);
-    gl.polygonOffset(1,0);
-    
-    gl.colorMask(true, false, false, true);
-    gl.uniform4fv(shProgram.iColor, colorPolygon );
-    surface.Draw();
-    gl.uniform4fv(shProgram.iColor, colorEdge );
-    surface.DrawWireframe();
+    gl.polygonOffset(1, 0);
 
-    // The SECOND PASS (for the right eye)
+    gl.uniformMatrix4fv(shProgram.iModelViewMatrix, false, matSurfaceLeft);
+    gl.uniform1i(shProgram.iUseTexture, 0);
+    gl.uniform4f(shProgram.iColor, 0.5, 0.5, 0.5, 1.0);
+    surface.DrawFilled();
+
+    gl.uniformMatrix4fv(shProgram.iModelViewMatrix, false, matSurfaceLeft);
+    gl.uniform4f(shProgram.iColor, 1.0, 0.0, 0.0, 1.0);
+    surface.Draw();
+
+    gl.disable(gl.POLYGON_OFFSET_FILL);
 
     gl.clear(gl.DEPTH_BUFFER_BIT);
 
-    let matrRightFrustum = stereoCam.calcRightFrustum();
-    gl.uniformMatrix4fv(shProgram.iProjectionMatrix, false, matrRightFrustum);
+    let rightFrustum = stereoCam.calcRightFrustum();
+    gl.uniformMatrix4fv(shProgram.iProjectionMatrix, false, rightFrustum);
 
-    let translateRightEye = m4. translation(-stereoCam.eyeSeparation/2, 0, 0);
-
-    matAccum0 = m4.multiply(rotateToPointZero, modelView );
-    matAccum1 = m4.multiply(translateRightEye, matAccum0 );
-    matAccum2 = m4.multiply(translateToPointZero, matAccum1 );
-
-    gl.uniformMatrix4fv(shProgram.iModelViewMatrix, false, matAccum2 );
+    let translateRightEye = m4.translation(-stereoCam.eyeSeparation / 2, 0, 0);
+    let matSurfaceRight = m4.multiply(translateRightEye, modelView);
+    matSurfaceRight = m4.multiply(m4.translation(0, 0, -10), matSurfaceRight);
 
     gl.colorMask(false, true, true, true);
-    gl.uniform4fv(shProgram.iColor, colorPolygon );
-    surface.Draw();
-    gl.uniform4fv(shProgram.iColor, colorEdge );
-    surface.DrawWireframe();
 
-    // RESET specific params to their default state
+    gl.enable(gl.POLYGON_OFFSET_FILL);
+    gl.polygonOffset(1, 0);
+
+    gl.uniformMatrix4fv(shProgram.iModelViewMatrix, false, matSurfaceRight);
+    gl.uniform1i(shProgram.iUseTexture, 0);
+    gl.uniform4f(shProgram.iColor, 0.5, 0.5, 0.5, 1.0);
+    surface.DrawFilled();
+
+    gl.uniformMatrix4fv(shProgram.iModelViewMatrix, false, matSurfaceRight);
+    gl.uniform4f(shProgram.iColor, 0.0, 1.0, 1.0, 1.0);
+    surface.Draw();
 
     gl.disable(gl.POLYGON_OFFSET_FILL);
+
     gl.colorMask(true, true, true, true);
 }
 
 
+function drawBackground() {
+    gl.useProgram(shProgram.prog);
 
-/* Initialize the WebGL context. Called from init() */
-function initGL() {
-    let prog = createProgram( gl, vertexShaderSource, fragmentShaderSource );
+    gl.uniform1i(shProgram.iFullScreenQuad, 1);
 
-    shProgram = new ShaderProgram('Basic', prog);
-    shProgram.Use();
+    let identity = m4.identity();
+    gl.uniformMatrix4fv(shProgram.iModelViewMatrix, false, identity);
+    gl.uniformMatrix4fv(shProgram.iProjectionMatrix, false, identity);
 
-    shProgram.iAttribVertex              = gl.getAttribLocation(prog, "vertex");
-    shProgram.iModelViewMatrix           = gl.getUniformLocation(prog, "ModelViewMatrix");
-    shProgram.iProjectionMatrix          = gl.getUniformLocation(prog, "ProjectionMatrix");
-    shProgram.iColor                     = gl.getUniformLocation(prog, "color");
+    gl.uniform1i(shProgram.iUseTexture, 1);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, iTextureWebCam);
+    gl.uniform1i(shProgram.iSampler, 0);
 
-    let data = {};
-    
-    CreateSurfaceData(data)
+    gl.bindBuffer(gl.ARRAY_BUFFER, fullscreenQuad.iVertexBuffer);
+    gl.vertexAttribPointer(shProgram.iAttribVertex, 3, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(shProgram.iAttribVertex);
 
-    surface = new Model('Surface');
-    surface.BufferData(data.verticesF32, data.indicesU16);
+    gl.bindBuffer(gl.ARRAY_BUFFER, fullscreenQuad.iTexCoordBuffer);
+    gl.vertexAttribPointer(shProgram.iAttribTexCoord, 2, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(shProgram.iAttribTexCoord);
 
-    surfaceWebCam = new Model('SurfaceWebCam');
-    // TODO: Place your code here to load two triangle geomtery
+    gl.uniform4f(shProgram.iColor, 1, 1, 1, 1);
 
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
 
-    stereoCam = new StereoCamera(
-        .7,     // decimeters
-        14.0,   // decimeters
-        1.3,    // aspect ratio of canvas
-        0.4,    // radians
-        8.0,    // decimeters
-        20.0    // decimeters
-    );
-
-    gl.enable(gl.DEPTH_TEST);
+    gl.uniform1i(shProgram.iFullScreenQuad, 0);
 }
 
 
-/* Creates a program for use in the WebGL context gl, and returns the
- * identifier for that program.  If an error occurs while compiling or
- * linking the program, an exception of type Error is thrown.  The error
- * string contains the compilation or linking error.  If no error occurs,
- * the program identifier is the return value of the function.
- * The second and third parameters are strings that contain the
- * source code for the vertex shader and for the fragment shader.
- */
-function createProgram(gl, vShader, fShader) {
-    let vsh = gl.createShader( gl.VERTEX_SHADER );
-    gl.shaderSource(vsh,vShader);
-    gl.compileShader(vsh);
-    if ( ! gl.getShaderParameter(vsh, gl.COMPILE_STATUS) ) {
-        throw new Error("Error in vertex shader:  " + gl.getShaderInfoLog(vsh));
-     }
-    let fsh = gl.createShader( gl.FRAGMENT_SHADER );
-    gl.shaderSource(fsh, fShader);
-    gl.compileShader(fsh);
-    if ( ! gl.getShaderParameter(fsh, gl.COMPILE_STATUS) ) {
-       throw new Error("Error in fragment shader:  " + gl.getShaderInfoLog(fsh));
-    }
-    let prog = gl.createProgram();
-    gl.attachShader(prog,vsh);
-    gl.attachShader(prog, fsh);
-    gl.linkProgram(prog);
-    if ( ! gl.getProgramParameter( prog, gl.LINK_STATUS) ) {
-       throw new Error("Link error in program:  " + gl.getProgramInfoLog(prog));
-    }
-    return prog;
-}
+function updateStereoParams() {
+    let eyeSep = parseFloat(document.getElementById("eyeSeparation").value);
+    let conv   = parseFloat(document.getElementById("convergence").value);
+    let fov    = parseFloat(document.getElementById("fov").value);
+    let nearC  = parseFloat(document.getElementById("nearClip").value);
+    let farC   = parseFloat(document.getElementById("farClip").value);
 
+    document.getElementById("eyeSepVal").innerText  = eyeSep.toFixed(2);
+    document.getElementById("convVal").innerText    = conv.toFixed(1);
+    document.getElementById("fovVal").innerText     = fov.toFixed(2);
+    document.getElementById("nearVal").innerText    = nearC.toFixed(1);
+    document.getElementById("farVal").innerText     = farC.toFixed(0);
 
-/**
- * initialization function that will be called when the page has loaded
- */
-function init() {
-    let canvas;
-    try {
-        canvas = document.getElementById("webglcanvas");
-        gl = canvas.getContext("webgl");
-        if ( ! gl ) {
-            throw "Browser does not support WebGL";
-        }
-    }
-    catch (e) {
-        document.getElementById("canvas-holder").innerHTML =
-            "<p>Sorry, could not get a WebGL graphics context.</p>";
-        return;
-    }
-    try {
-        initGL();  // initialize the WebGL graphics context
-    }
-    catch (e) {
-        document.getElementById("canvas-holder").innerHTML =
-            "<p>Sorry, could not initialize the WebGL graphics context: " + e + "</p>";
-        return;
-    }
+    stereoCam.eyeSeparation = eyeSep;
+    stereoCam.convergence = conv;
+    stereoCam.FOV = fov;
+    stereoCam.nearClippingDistance = nearC;
+    stereoCam.farClippingDistance = farC;
 
-    video = document.createElement('video');
-    video.autoplay = true;
-
-    // Connect to video stream
-    let constraints = {video: true};
-    navigator.mediaDevices.getUserMedia(constraints).then(function (stream) {
-        video.srcObject = stream;
-
-        let track = stream.getVideoTracks()[0];
-        let settings = track.getSettings();
-
-        iTextureWebCam = CreateWebCamTexture(settings.width, settings.height);
-
-        video.play();
-    }  )
-    .catch(function(err) {
-        console.log(err.name + ": " + err.message);
-    }
-    );
-
-    setInterval(draw, 1/20);
-
-    spaceball = new TrackballRotator(canvas, draw, 0);
-
-    draw();
+    drawScene();
 }
