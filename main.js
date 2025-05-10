@@ -14,6 +14,10 @@ let fullscreenQuad = {
     iTexCoordBuffer: null
 };
 
+let sensorSocket = null;
+let orientationMatrix = m4.identity();
+let calibration = null;
+
 function init() {
     let canvas = document.getElementById("webglcanvas");
     try {
@@ -44,21 +48,79 @@ function init() {
 
     video = document.createElement('video');
     video.autoplay = true;
-    navigator.mediaDevices.getUserMedia({video: true}).then(function(stream) {
-        video.srcObject = stream;
-        let track = stream.getVideoTracks()[0];
-        let settings = track.getSettings();
-        iTextureWebCam = CreateWebCamTexture(settings.width, settings.height);
-        video.play();
-    }).catch(function(err) {
-        console.log(err.name + ": " + err.message);
-    });
+    navigator.mediaDevices.getUserMedia({ video: true })
+        .then(stream => {
+            video.srcObject = stream;
+            const { width, height } = stream.getVideoTracks()[0].getSettings();
+            iTextureWebCam = CreateWebCamTexture(width, height);
+            video.play();
+        })
+        .catch(err => console.log(err));
 
     spaceball = new TrackballRotator(canvas, drawScene, 0);
 
     setInterval(drawScene, 1000 / 30);
 }
 
+
+function connectSensor() {
+    if (sensorSocket) sensorSocket.close();
+
+    const ip = document.getElementById("sensorIp").value.trim();
+    if (!ip) {
+        alert("Введіть IP телефону");
+        return;
+    }
+
+    const url = `ws://${ip}:8080/sensor/connect?type=android.sensor.accelerometer`;
+    sensorSocket = new WebSocket(url);
+
+    sensorSocket.onopen = () => setStatus("Connected", true);
+    sensorSocket.onclose = () => setStatus("Disconnected", false);
+    sensorSocket.onerror = () => setStatus("Error", false);
+    sensorSocket.onmessage = handleSensorData;
+}
+
+function setStatus(txt, ok) {
+    const el = document.getElementById("sensorStatus");
+    el.textContent = txt;
+    el.className = ok ? "connected" : "disconnected";
+}
+
+let sp = 0, sr = 0;
+const ALPHA = 0.15;
+
+function handleSensorData(evt) {
+    let msg;
+    try {
+        msg = JSON.parse(evt.data);
+    } catch {
+        return;
+    }
+
+    const v = Array.isArray(msg) ? msg :
+        (Array.isArray(msg.values) ? msg.values : null);
+    if (!v || v.length < 3) return;
+
+    const [ax, ay, az] = v;
+
+    const pitch = Math.atan2(-ax, Math.sqrt(ay*ay + az*az));
+    const roll  = Math.atan2(ay,  az);
+
+    sp = ALPHA * pitch + (1 - ALPHA) * sp;
+    sr = ALPHA * roll  + (1 - ALPHA) * sr;
+
+    if (calibration === null) calibration = { pitch: sp, roll: sr };
+
+    const dPitch = sp - calibration.pitch;
+    const dRoll  = sr - calibration.roll;
+
+    const rotX = m4.xRotation(-dRoll);
+    const rotY = m4.yRotation( dPitch);
+    orientationMatrix = m4.multiply(rotY, rotX);
+}
+
+function calibrateOrientation() { calibration = null; }
 
 function initShaders() {
     let vsh = gl.createShader(gl.VERTEX_SHADER);
@@ -142,10 +204,10 @@ function drawScene() {
             gl.RGBA, gl.UNSIGNED_BYTE, video);
     }
 
-    gl.colorMask(true, true, true, true);
     drawBackground();
 
     let modelView = spaceball.getViewMatrix();
+    modelView = m4.multiply(orientationMatrix, modelView);
 
     let leftFrustum = stereoCam.calcLeftFrustum();
     gl.uniformMatrix4fv(shProgram.iProjectionMatrix, false, leftFrustum);
@@ -164,7 +226,6 @@ function drawScene() {
     gl.uniform4f(shProgram.iColor, 0.5, 0.5, 0.5, 1.0);
     surface.DrawFilled();
 
-    gl.uniformMatrix4fv(shProgram.iModelViewMatrix, false, matSurfaceLeft);
     gl.uniform4f(shProgram.iColor, 1.0, 0.0, 0.0, 1.0);
     surface.Draw();
 
@@ -189,7 +250,6 @@ function drawScene() {
     gl.uniform4f(shProgram.iColor, 0.5, 0.5, 0.5, 1.0);
     surface.DrawFilled();
 
-    gl.uniformMatrix4fv(shProgram.iModelViewMatrix, false, matSurfaceRight);
     gl.uniform4f(shProgram.iColor, 0.0, 1.0, 1.0, 1.0);
     surface.Draw();
 

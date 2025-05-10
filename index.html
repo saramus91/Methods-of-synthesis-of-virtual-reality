@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html>
 <head>
-   <meta charset="UTF-8">
-   <title>PA#1</title>
+   <meta charset="UTF-8" />
+   <title>PA#2</title>
    <style>
       body {
          background-color: #EEEEEE;
@@ -14,14 +14,34 @@
          margin-top: 10px;
       }
       #controls {
-         text-align: center;
-         margin-top: 10px;
+         max-width: 960px;
+         margin: 10px auto;
+         text-align: center
       }
       .slider-label {
          display: inline-block;
          width: 150px;
          text-align: right;
          margin-right: 5px;
+      }
+      #sensorPane {
+         border: 1px solid #999;
+         border-radius: 6px;
+         padding: 8px;
+         margin-top: 12px;
+         background: #fafafa
+      }
+      #sensorPane label {
+         font-weight: bold
+      }
+      #sensorStatus {
+         font-weight: bold
+      }
+      #sensorStatus.connected {
+         color: #0a0
+      }
+      #sensorStatus.disconnected {
+         color: #c00
       }
    </style>
 
@@ -60,6 +80,14 @@
       <span class="slider-label">Far Clipping:</span>
       <input type="range" id="farClip" min="15" max="40" step="1" value="20" oninput="updateStereoParams()">
       <span id="farVal">20</span>
+   </div>
+
+   <div id="sensorPane">
+      <label for="sensorIp">IP телефону:</label>
+      <input id="sensorIp" type="text" size="15" placeholder="Введіть IP">
+      <button onclick="connectSensor()">Connect</button>
+      <button onclick="calibrateOrientation()">Calibrate (zero)</button>
+      <span id="sensorStatus" class="disconnected">Disconnected</span>
    </div>
 </div>
 
